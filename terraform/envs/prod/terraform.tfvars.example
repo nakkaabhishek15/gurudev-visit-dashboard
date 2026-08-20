@@ -16,7 +16,17 @@ frontend_bucket_name = "gurudev-frontend-prod-716156543359"
 # MUST be issued in us-east-1, whatever region the rest of the stack uses.
 # acm_certificate_arn = "arn:aws:acm:us-east-1:716156543359:certificate/REPLACE-ME"
 
-github_repository = "nakkaabhishek15/gurudev-visit-dashboard"
+# NOT just owner/repo. GitHub issues OIDC subjects with immutable numeric IDs
+# appended to both the owner and the repo, so that renaming either cannot hand
+# your AWS trust to whoever claims the old name. The role's trust policy must
+# match that exact string; the plain owner/repo form is rejected with
+# "Not authorized to perform sts:AssumeRoleWithWebIdentity".
+#
+# Find the two ids with:
+#   curl -s https://api.github.com/repos/<owner>/<repo> | jq '.id, .owner.id'
+#
+# Format: <owner>@<owner_id>/<repo>@<repo_id>
+github_repository = "nakkaabhishek15@318477587/gurudev-visit-dashboard@1340134155"
 
 # --- Optional overrides -----------------------------------------------------
 

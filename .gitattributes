@@ -1,0 +1,13 @@
+# Normalize to LF in the repository; let Git decide the working-tree ending.
+* text=auto
+
+# These are executed by Linux containers and CI runners. A CRLF line ending on
+# the shebang line produces "bad interpreter: /usr/bin/env bash^M", so pin them
+# to LF regardless of the checkout platform.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Generated -- collapse it in diffs and reviews.
+package-lock.json linguist-generated=true

@@ -15,8 +15,10 @@
 --
 --   * `status IS DISTINCT FROM 'cancelled'` -- not `<> 'cancelled'`. A NULL status
 --     would make `<>` evaluate to NULL and silently drop the row.
---   * LEFT JOIN, not JOIN. 36 registrations have a person_id with no matching
---     person row; an inner join would discard them and every total would be low.
+--   * Geography comes from r.questions->'address', NOT from the person's profile
+--     in retreat_guru_people. The two never disagree, but the profile is missing
+--     for about a fifth of registrations -- reading it undercounts real provinces
+--     and inflates (unknown). This is the bug that made BC show 3 instead of 5.
 --   * COALESCE(NULLIF(BTRIM(...), ''), '(unknown)') -- blank strings and missing
 --     people both land in one bucket, which is the bucket the dashboard draws.
 
@@ -34,11 +36,10 @@ ORDER BY r.program_id;
 \echo ''
 \echo '=== 2. Province breakdown, per programme ==='
 -- Compare with: the Province panel. Each bar is one (province, programme) pair.
-SELECT COALESCE(NULLIF(BTRIM(p.address->>'state'), ''), '(unknown)') AS province,
+SELECT COALESCE(NULLIF(BTRIM(r.questions->'address'->>'state'), ''), '(unknown)') AS province,
        r.program_id,
        COUNT(*) AS registrations
 FROM raw_data.retreat_guru_registrations r
-LEFT JOIN raw_data.retreat_guru_people p ON p.person_id = r.person_id
 WHERE r.program_id IN ('4521', '4522')
   AND r.status IS DISTINCT FROM 'cancelled'
 GROUP BY province, r.program_id
@@ -46,10 +47,9 @@ ORDER BY COUNT(*) DESC, province;
 
 \echo ''
 \echo '=== 3. Province totals across both programmes ==='
-SELECT COALESCE(NULLIF(BTRIM(p.address->>'state'), ''), '(unknown)') AS province,
+SELECT COALESCE(NULLIF(BTRIM(r.questions->'address'->>'state'), ''), '(unknown)') AS province,
        COUNT(*) AS registrations
 FROM raw_data.retreat_guru_registrations r
-LEFT JOIN raw_data.retreat_guru_people p ON p.person_id = r.person_id
 WHERE r.program_id IN ('4521', '4522')
   AND r.status IS DISTINCT FROM 'cancelled'
 GROUP BY province
@@ -57,11 +57,10 @@ ORDER BY COUNT(*) DESC, province;
 
 \echo ''
 \echo '=== 4. Country breakdown, per programme ==='
-SELECT COALESCE(NULLIF(BTRIM(p.address->>'country'), ''), '(unknown)') AS country,
+SELECT COALESCE(NULLIF(BTRIM(r.questions->'address'->>'country'), ''), '(unknown)') AS country,
        r.program_id,
        COUNT(*) AS registrations
 FROM raw_data.retreat_guru_registrations r
-LEFT JOIN raw_data.retreat_guru_people p ON p.person_id = r.person_id
 WHERE r.program_id IN ('4521', '4522')
   AND r.status IS DISTINCT FROM 'cancelled'
 GROUP BY country, r.program_id
@@ -69,11 +68,10 @@ ORDER BY COUNT(*) DESC, country;
 
 \echo ''
 \echo '=== 5. City breakdown, per programme ==='
-SELECT COALESCE(NULLIF(BTRIM(p.address->>'city'), ''), '(unknown)') AS city,
+SELECT COALESCE(NULLIF(BTRIM(r.questions->'address'->>'city'), ''), '(unknown)') AS city,
        r.program_id,
        COUNT(*) AS registrations
 FROM raw_data.retreat_guru_registrations r
-LEFT JOIN raw_data.retreat_guru_people p ON p.person_id = r.person_id
 WHERE r.program_id IN ('4521', '4522')
   AND r.status IS DISTINCT FROM 'cancelled'
 GROUP BY city, r.program_id
@@ -86,11 +84,10 @@ ORDER BY COUNT(*) DESC, city;
 -- If one differs, the dashboard is double-counting or dropping rows.
 WITH base AS (
     SELECT r.registration_id,
-           COALESCE(NULLIF(BTRIM(p.address->>'state'), ''), '(unknown)')   AS province,
-           COALESCE(NULLIF(BTRIM(p.address->>'city'), ''), '(unknown)')    AS city,
-           COALESCE(NULLIF(BTRIM(p.address->>'country'), ''), '(unknown)') AS country
+           COALESCE(NULLIF(BTRIM(r.questions->'address'->>'state'), ''), '(unknown)')   AS province,
+           COALESCE(NULLIF(BTRIM(r.questions->'address'->>'city'), ''), '(unknown)')    AS city,
+           COALESCE(NULLIF(BTRIM(r.questions->'address'->>'country'), ''), '(unknown)') AS country
     FROM raw_data.retreat_guru_registrations r
-    LEFT JOIN raw_data.retreat_guru_people p ON p.person_id = r.person_id
     WHERE r.program_id IN ('4521', '4522')
       AND r.status IS DISTINCT FROM 'cancelled'
 )
@@ -105,29 +102,41 @@ SELECT (SELECT SUM(n) FROM (SELECT COUNT(*) n FROM base GROUP BY province) x) AS
 -- Retreat Guru. Change the province code to audit a different bar.
 SELECT r.program_id,
        r.status,
-       p.full_name,
-       p.address->>'city'    AS city,
-       p.address->>'state'   AS province,
-       p.address->>'country' AS country
+       r.full_name,
+       r.questions->'address'->>'city'    AS city,
+       r.questions->'address'->>'state'   AS province,
+       r.questions->'address'->>'country' AS country
 FROM raw_data.retreat_guru_registrations r
-LEFT JOIN raw_data.retreat_guru_people p ON p.person_id = r.person_id
 WHERE r.program_id IN ('4521', '4522')
   AND r.status IS DISTINCT FROM 'cancelled'
-  AND BTRIM(p.address->>'state') = 'AB'
-ORDER BY r.program_id, p.full_name;
+  AND BTRIM(r.questions->'address'->>'state') = 'AB'
+ORDER BY r.program_id, r.full_name;
 
 \echo ''
-\echo '=== 8. Data quality: registrations with no person record ==='
--- These are the (unknown) bars. They have no geography at all, so any statement
--- about "where attendees are from" is really over (registrations - this count).
-SELECT r.program_id, COUNT(*) AS no_person_row
+\echo '=== 8. Data quality: registrations with a blank address answer ==='
+-- These are the (unknown) bars. Should now be small or empty; before the fix this
+-- also swallowed every registration whose person profile was missing.
+SELECT r.program_id, COUNT(*) AS blank_address
+FROM raw_data.retreat_guru_registrations r
+WHERE r.program_id IN ('4521', '4522')
+  AND r.status IS DISTINCT FROM 'cancelled'
+  AND NULLIF(BTRIM(r.questions->'address'->>'state'), '') IS NULL
+GROUP BY r.program_id
+ORDER BY r.program_id;
+
+\echo ''
+\echo '=== 8b. Registration answer vs person profile, side by side ==='
+-- Proof the switch was safe: rows where both are present must agree. Rows where
+-- from_person is blank are exactly what the old query was throwing away.
+SELECT COALESCE(NULLIF(BTRIM(r.questions->'address'->>'state'), ''), '(blank)') AS from_registration,
+       COALESCE(NULLIF(BTRIM(p.address->>'state'), ''), '(blank)')                  AS from_person,
+       COUNT(*) AS registrations
 FROM raw_data.retreat_guru_registrations r
 LEFT JOIN raw_data.retreat_guru_people p ON p.person_id = r.person_id
 WHERE r.program_id IN ('4521', '4522')
   AND r.status IS DISTINCT FROM 'cancelled'
-  AND p.person_id IS NULL
-GROUP BY r.program_id
-ORDER BY r.program_id;
+GROUP BY from_registration, from_person
+ORDER BY registrations DESC;
 
 \echo ''
 \echo '=== 9. Data quality: city names that differ only by case or spacing ==='
@@ -135,17 +144,16 @@ ORDER BY r.program_id;
 -- separate bars splitting one city. Any row returned here means the City chart
 -- understates that place. Province and Country are two-letter codes, so they are
 -- far less exposed to this.
-SELECT LOWER(BTRIM(p.address->>'city')) AS normalised,
-       COUNT(DISTINCT BTRIM(p.address->>'city')) AS spelling_variants,
-       STRING_AGG(DISTINCT BTRIM(p.address->>'city'), ' | ') AS variants_found,
+SELECT LOWER(BTRIM(r.questions->'address'->>'city')) AS normalised,
+       COUNT(DISTINCT BTRIM(r.questions->'address'->>'city')) AS spelling_variants,
+       STRING_AGG(DISTINCT BTRIM(r.questions->'address'->>'city'), ' | ') AS variants_found,
        COUNT(*) AS registrations
 FROM raw_data.retreat_guru_registrations r
-LEFT JOIN raw_data.retreat_guru_people p ON p.person_id = r.person_id
 WHERE r.program_id IN ('4521', '4522')
   AND r.status IS DISTINCT FROM 'cancelled'
-  AND NULLIF(BTRIM(p.address->>'city'), '') IS NOT NULL
+  AND NULLIF(BTRIM(r.questions->'address'->>'city'), '') IS NOT NULL
 GROUP BY normalised
-HAVING COUNT(DISTINCT BTRIM(p.address->>'city')) > 1
+HAVING COUNT(DISTINCT BTRIM(r.questions->'address'->>'city')) > 1
 ORDER BY registrations DESC;
 
 \echo ''
@@ -153,14 +161,13 @@ ORDER BY registrations DESC;
 -- A Canadian province code against country US (or the reverse) means one of the
 -- two fields is wrong. Also catches the CA ambiguity: CA is California in the
 -- province field and Canada in the country field.
-SELECT p.address->>'country' AS country,
-       p.address->>'state'   AS province,
+SELECT r.questions->'address'->>'country' AS country,
+       r.questions->'address'->>'state'   AS province,
        COUNT(*)              AS registrations
 FROM raw_data.retreat_guru_registrations r
-LEFT JOIN raw_data.retreat_guru_people p ON p.person_id = r.person_id
 WHERE r.program_id IN ('4521', '4522')
   AND r.status IS DISTINCT FROM 'cancelled'
-  AND NULLIF(BTRIM(p.address->>'state'), '') IS NOT NULL
+  AND NULLIF(BTRIM(r.questions->'address'->>'state'), '') IS NOT NULL
 GROUP BY country, province
 ORDER BY country, province;
 
@@ -170,8 +177,6 @@ ORDER BY country, province;
 -- old, a disagreement with Retreat Guru may be lag rather than error.
 SELECT 'registrations' AS table_name, MAX(ingested_at) AS last_ingested, COUNT(*) AS rows
 FROM raw_data.retreat_guru_registrations
-UNION ALL
-SELECT 'people', MAX(ingested_at), COUNT(*) FROM raw_data.retreat_guru_people
 UNION ALL
 SELECT 'programs', MAX(ingested_at), COUNT(*) FROM raw_data.retreat_guru_programs;
 

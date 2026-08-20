@@ -15,18 +15,21 @@ from app.settings import get_settings
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
-# Geography arrives as a jsonb blob on the person, not as columns. Retreat Guru
-# calls the province "state" regardless of country.
+# Geography comes from the address captured ON THE REGISTRATION, not from the
+# person's profile. Both carry the same six keys and they never disagree, but the
+# profile is missing for a fifth of registrations -- reading it dropped those into
+# (unknown) and undercounted real provinces. Retreat Guru's own reports use the
+# registration answer, so this now matches them. Retreat Guru calls the province
+# "state" regardless of country.
 DIMENSION_COLUMNS = {
     "Province": "state",
     "City": "city",
     "Country": "country",
 }
 
-# A third of the registrations for these programs have a person_id with no row in
-# retreat_guru_people, so they carry no geography at all. They get their own
-# bucket rather than being dropped -- silently discarding them would make the
-# per-dimension bars disagree with the registration total on the same screen.
+# Kept for the rare registration that left the address blank. It should now be a
+# small bucket or absent entirely; it is still drawn rather than dropped so the
+# per-dimension bars always reconcile with the registration total beside them.
 UNKNOWN = "(unknown)"
 
 
@@ -50,8 +53,8 @@ def _allowed_course_ids(requested: list[str] | None) -> list[str]:
 
 
 def _geo(column: str) -> str:
-    """SQL for one geography field, with blanks and missing people folded into UNKNOWN."""
-    return f"COALESCE(NULLIF(BTRIM(p.address->>'{column}'), ''), '{UNKNOWN}')"
+    """SQL for one geography field of the registration's address answer."""
+    return f"COALESCE(NULLIF(BTRIM(r.questions->'address'->>'{column}'), ''), '{UNKNOWN}')"
 
 
 # Registration rows in scope, one per registration, with geography resolved.
@@ -64,7 +67,6 @@ BASE_SQL = f"""
            {_geo('city')}    AS city,
            {_geo('country')} AS country
     FROM raw_data.retreat_guru_registrations r
-    LEFT JOIN raw_data.retreat_guru_people p ON p.person_id = r.person_id
     WHERE r.program_id = ANY(%(course_ids)s)
       AND (%(include_cancelled)s OR r.status IS DISTINCT FROM 'cancelled')
 """
@@ -77,7 +79,6 @@ BASE_SQL = f"""
 SYNCED_AT_SQL = """
     SELECT LEAST(
         (SELECT MAX(ingested_at) FROM raw_data.retreat_guru_registrations),
-        (SELECT MAX(ingested_at) FROM raw_data.retreat_guru_people),
         (SELECT MAX(ingested_at) FROM raw_data.retreat_guru_programs)
     ) AS data_synced_at
 """

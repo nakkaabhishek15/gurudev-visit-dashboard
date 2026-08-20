@@ -15,7 +15,7 @@
 
 /** @typedef {{ course_id: string, course_name?: string, start_date?: string, end_date?: string, status?: string }} Course */
 /** @typedef {{ dimension: string, category: string, course_id: string, registration_count: number, course_registration_count: number }} Item */
-/** @typedef {{ items: Item[], courses: Course[], total_registration_count: number, total_course_count: number, available_provinces: string[], available_countries: string[] }} Report */
+/** @typedef {{ items: Item[], courses: Course[], total_registration_count: number, total_course_count: number, available_provinces: string[], available_countries: string[], data_synced_at: string | null }} Report */
 /** @typedef {{ key: string, empty: string }} MultiConfig */
 
 /** @param {string} id */
@@ -40,6 +40,16 @@ const DIMENSIONS = ['Province', 'City', 'Country'];
 const API = '/reports/retreat-guru-course-demographics';
 
 const nf = new Intl.NumberFormat('en-CA');
+
+// Retreat Guru stores its form's "Other" province option lowercase. Presented
+// capitalised so it reads as a label rather than a stray value -- display only:
+// the raw string is still what gets filtered on, and nothing in the warehouse
+// changes. Distinct from (unknown), which this dashboard adds for registrations
+// whose person record is missing.
+const CATEGORY_LABELS = /** @type {Record<string, string>} */ ({ other: 'Other' });
+
+/** @param {string} value */
+const categoryLabel = (value) => CATEGORY_LABELS[value] ?? value;
 
 /** @type {MultiConfig[]} */
 const MULTI = [
@@ -114,7 +124,12 @@ export async function mountGurudevVisitReport({ request }) {
     // A chosen value stays listed even when it does not match the query --
     // otherwise typing would hide a selection that is still being applied.
     const visible = query
-      ? options.filter((o) => o.toLowerCase().includes(query) || chosen.has(o))
+      ? options.filter(
+          (o) =>
+            o.toLowerCase().includes(query) ||
+            categoryLabel(o).toLowerCase().includes(query) ||
+            chosen.has(o)
+        )
       : options;
 
     within(node, '.ms-list').innerHTML = visible.length
@@ -123,7 +138,7 @@ export async function mountGurudevVisitReport({ request }) {
             (option) =>
               `<label class="${chosen.has(option) ? 'on' : ''}"><input type="checkbox" value="${escapeHtml(option)}" ${
                 chosen.has(option) ? 'checked' : ''
-              } /><span>${escapeHtml(option)}</span></label>`
+              } /><span>${escapeHtml(categoryLabel(option))}</span></label>`
           )
           .join('')
       : `<p class="ms-note">${options.length ? 'Nothing matches that search.' : 'No values in the current scope.'}</p>`;
@@ -134,7 +149,8 @@ export async function mountGurudevVisitReport({ request }) {
     } else {
       const picked = options.filter((option) => chosen.has(option));
       const shown = picked.length ? picked : [...chosen];
-      label.textContent = shown.length <= 2 ? shown.join(', ') : `${shown.length} selected`;
+      label.textContent =
+        shown.length <= 2 ? shown.map(categoryLabel).join(', ') : `${shown.length} selected`;
       label.classList.remove('empty');
     }
     const count = within(node, '.ms-count');
@@ -229,6 +245,24 @@ export async function mountGurudevVisitReport({ request }) {
   }
 
   /** @param {Report} payload */
+  function renderSyncedAt(payload) {
+    const node = el('syncedAt');
+    if (!node) return;
+    const iso = payload.data_synced_at;
+    if (!iso) {
+      // Null means no ingested_at anywhere, which is itself worth saying rather
+      // than leaving the line blank and implying freshness.
+      node.textContent = 'Sync time unavailable.';
+      node.removeAttribute('title');
+      return;
+    }
+    const age = describeAge(iso);
+    const exact = new Date(iso).toLocaleString('en-CA');
+    node.textContent = `Warehouse data last synced ${age ?? 'at an unknown time'} · ${exact}`;
+    node.title = `Oldest of the three source tables' most recent ingested_at (${iso})`;
+  }
+
+  /** @param {Report} payload */
   function refreshOptions(payload) {
     state.options.province = payload.available_provinces || [];
     state.options.country = payload.available_countries || [];
@@ -300,7 +334,7 @@ export async function mountGurudevVisitReport({ request }) {
             .map((s) => {
               const count = group.rows.get(s.id)?.registration_count || 0;
               const share = s.total ? ((count / s.total) * 100).toFixed(1) : '0.0';
-              const tip = `${s.label} (#${s.id}) — ${decodeHtml(group.category)}: ${nf.format(
+              const tip = `${s.label} (#${s.id}) — ${decodeHtml(categoryLabel(group.category))}: ${nf.format(
                 count
               )} of ${nf.format(s.total)} registrations (${share}%)`;
               return `<div class="bar-line" title="${escapeHtml(tip)}">
@@ -311,7 +345,7 @@ export async function mountGurudevVisitReport({ request }) {
             })
             .join('');
           return `<div class="bar-group">
-            <div class="bar-cat">${text(group.category)}</div>
+            <div class="bar-cat">${text(categoryLabel(group.category))}</div>
             ${lines}
           </div>`;
         })
@@ -364,6 +398,7 @@ export async function mountGurudevVisitReport({ request }) {
     try {
       const body = await api(API, [...filterParams(), ['page_size', '500']]);
       refreshOptions(body);
+      renderSyncedAt(body);
       renderCharts(body);
     } catch (error) {
       el('charts').innerHTML = '';
@@ -454,3 +489,22 @@ function decodeHtml(value) {
 
 /** @param {unknown} value */
 const text = (value) => escapeHtml(decodeHtml(value ?? ''));
+
+/**
+ * "3 hours ago" style age, so a stale snapshot is obvious at a glance in a way an
+ * absolute timestamp is not. The exact time goes in the title attribute for
+ * anyone who needs it.
+ *
+ * @param {string} iso
+ */
+export function describeAge(iso) {
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return null;
+  const minutes = Math.floor((Date.now() - then.getTime()) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}

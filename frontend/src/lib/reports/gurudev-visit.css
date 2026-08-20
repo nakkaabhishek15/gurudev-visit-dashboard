@@ -94,3 +94,8 @@ panel surface showing through between adjacent bars. */
 .rg-report .empty { color: var(--muted); padding: 18px 16px; }
 .rg-report .error { background: var(--danger-bg); border: 1px solid var(--danger-border); border-radius: 8px; color: var(--danger); padding: 12px 14px; }
 .rg-report .busy { opacity: 0.55; pointer-events: none; }
+
+/* Sync age, under the report subtitle. Deliberately quiet: it is a caveat, not a
+   headline, but it must be on screen because the numbers are a snapshot. */
+.rg-report .synced { color: var(--muted); font-size: 0.8rem; margin: 6px 0 0; }
+.rg-report .synced:empty { display: none; }

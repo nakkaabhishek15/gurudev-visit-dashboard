@@ -52,6 +52,24 @@
     return Math.round((start.getTime() - today.getTime()) / 86_400_000);
   });
 
+  // Same wording as the report page, so the two never seem to disagree.
+  const syncedAt = $derived.by(() => {
+    const iso = report?.data_synced_at;
+    if (!iso) return null;
+    const then = new Date(iso);
+    if (Number.isNaN(then.getTime())) return null;
+    const minutes = Math.floor((Date.now() - then.getTime()) / 60000);
+    const age =
+      minutes < 1
+        ? 'just now'
+        : minutes < 60
+          ? `${minutes} minute${minutes === 1 ? '' : 's'} ago`
+          : minutes < 1440
+            ? `${Math.floor(minutes / 60)} hour${Math.floor(minutes / 60) === 1 ? '' : 's'} ago`
+            : `${Math.floor(minutes / 1440)} day${Math.floor(minutes / 1440) === 1 ? '' : 's'} ago`;
+    return { age, exact: then.toLocaleString('en-CA'), iso };
+  });
+
   const countries = $derived(
     (report?.available_countries ?? []).filter((c) => c !== '(unknown)').length
   );
@@ -102,6 +120,12 @@
     <p class="notice">
       Live registration figures are unavailable right now &mdash; the warehouse connection did not
       respond. The report below will show the same error until it recovers.
+    </p>
+  {/if}
+
+  {#if syncedAt}
+    <p class="synced" title={`Oldest of the three source tables' most recent ingested_at (${syncedAt.iso})`}>
+      Warehouse data last synced <strong>{syncedAt.age}</strong> &middot; {syncedAt.exact}
     </p>
   {/if}
 
@@ -198,6 +222,17 @@
     border-radius: 8px;
     color: var(--muted);
     font-size: 0.9rem;
+  }
+
+  .synced {
+    margin: 0.9rem 0 0;
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+
+  .synced strong {
+    color: var(--text);
+    font-weight: 600;
   }
 
   .section-title {

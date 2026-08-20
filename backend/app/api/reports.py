@@ -69,6 +69,19 @@ BASE_SQL = f"""
       AND (%(include_cancelled)s OR r.status IS DISTINCT FROM 'cancelled')
 """
 
+# The report is only as fresh as its stalest input, so this reports the OLDEST of
+# the three tables' newest rows rather than the newest overall -- claiming the
+# data is current because one table synced would be the wrong way to be wrong.
+# The sync upserts on record_hash, so a table's MAX(ingested_at) moves whenever
+# the sync last saw a change there.
+SYNCED_AT_SQL = """
+    SELECT LEAST(
+        (SELECT MAX(ingested_at) FROM raw_data.retreat_guru_registrations),
+        (SELECT MAX(ingested_at) FROM raw_data.retreat_guru_people),
+        (SELECT MAX(ingested_at) FROM raw_data.retreat_guru_programs)
+    ) AS data_synced_at
+"""
+
 # The ::text[] casts are load-bearing. Without them Postgres cannot infer a type
 # for the parameter when the filter is absent (it arrives as a bare NULL) and
 # rejects the whole statement with AmbiguousParameter.
@@ -192,6 +205,9 @@ def course_demographics(
             )
             course_rows = [dict(row) for row in cur.fetchall()]
 
+            cur.execute(SYNCED_AT_SQL)
+            synced_at = cur.fetchone()["data_synced_at"]
+
     return {
         "items": items,
         "courses": course_rows,
@@ -199,4 +215,5 @@ def course_demographics(
         "total_course_count": summary["total_course_count"],
         "available_provinces": sorted(summary["available_provinces"] or []),
         "available_countries": sorted(summary["available_countries"] or []),
+        "data_synced_at": synced_at,
     }

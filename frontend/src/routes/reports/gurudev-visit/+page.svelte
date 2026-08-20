@@ -37,6 +37,7 @@
           <p class="subtitle">
             Registrations for the two Gurudev visit programs, broken down by province, city, and country.
           </p>
+          <p class="synced" id="syncedAt"></p>
         </div>
       </header>
 

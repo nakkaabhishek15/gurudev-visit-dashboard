@@ -25,6 +25,7 @@ type Report = {
   total_registration_count: number;
   total_course_count: number;
   available_countries: string[];
+  data_synced_at: string | null;
 };
 
 export const load: PageLoad = async ({ parent }) => {

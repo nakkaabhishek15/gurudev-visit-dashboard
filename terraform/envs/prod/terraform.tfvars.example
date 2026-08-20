@@ -5,11 +5,16 @@
 # Globally unique. Convention: <app>-frontend-<env>-<account-id>
 frontend_bucket_name = "gurudev-frontend-prod-716156543359"
 
-# Must resolve to the CloudFront distribution once deployed.
-app_hostname = "site.devopsagent.com"
-
+# Both optional. Leave them empty for the first deploy: CloudFront then serves the
+# app on its own dxxxxxxxx.cloudfront.net name over HTTPS, so there is a working
+# link to share before any DNS exists. `tofu output app_url` prints it.
+#
+# To add the custom domain later, request the certificate, point the hostname at
+# the distribution, set both values, and re-apply.
+#
+# app_hostname = "site.devopsagent.com"
 # MUST be issued in us-east-1, whatever region the rest of the stack uses.
-acm_certificate_arn = "arn:aws:acm:us-east-1:716156543359:certificate/REPLACE-ME"
+# acm_certificate_arn = "arn:aws:acm:us-east-1:716156543359:certificate/REPLACE-ME"
 
 github_repository = "nakkaabhishek15/gurudev-visit-dashboard"
 

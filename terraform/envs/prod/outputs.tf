@@ -12,8 +12,8 @@ output "backend_ecr_repository_url" {
 }
 
 output "backend_ecs_cluster_name" {
-  description = "ECS cluster running the backend service."
-  value       = aws_ecs_cluster.app.name
+  description = "ECS cluster running the backend service. Shared with the aolf stack."
+  value       = data.aws_ecs_cluster.shared.cluster_name
 }
 
 output "backend_ecs_service_name" {
@@ -57,8 +57,8 @@ output "cloudfront_domain_name" {
 }
 
 output "app_url" {
-  description = "Public URL for the app."
-  value       = "https://${var.app_hostname}"
+  description = "Public URL for the app. The CloudFront domain until app_hostname is set."
+  value       = "https://${var.app_hostname == "" ? aws_cloudfront_distribution.app.domain_name : var.app_hostname}"
 }
 
 output "app_secret_arns" {

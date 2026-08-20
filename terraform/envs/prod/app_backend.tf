@@ -93,38 +93,21 @@ resource "aws_iam_role" "backend_task" {
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume_role.json
 }
 
-resource "aws_security_group" "alb" {
-  name        = "${var.app_name}-${var.environment}-alb"
-  description = "Allows CloudFront to reach the ${var.app_name} load balancer."
-  vpc_id      = data.aws_vpc.app.id
-}
-
-resource "aws_vpc_security_group_ingress_rule" "alb_http" {
-  security_group_id = aws_security_group.alb.id
-  description       = "HTTP from CloudFront origin-facing edge locations only."
-  prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront_origin_facing.id
-  from_port         = 80
-  ip_protocol       = "tcp"
-  to_port           = 80
-}
-
-resource "aws_vpc_security_group_egress_rule" "alb_all" {
-  security_group_id = aws_security_group.alb.id
-  description       = "Allow load balancer egress to backend tasks."
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
-}
-
 resource "aws_security_group" "backend_tasks" {
   name        = "${local.backend_name}-tasks"
   description = "Allows ALB traffic to the ${var.app_name} FastAPI tasks."
   vpc_id      = data.aws_vpc.app.id
 }
 
+# One rule per security group on the shared load balancer. Reading them from the
+# data source rather than naming one keeps this correct if the aolf stack ever
+# adds a second.
 resource "aws_vpc_security_group_ingress_rule" "backend_from_alb" {
+  for_each = data.aws_lb.shared.security_groups
+
   security_group_id            = aws_security_group.backend_tasks.id
-  description                  = "FastAPI traffic from the application load balancer."
-  referenced_security_group_id = aws_security_group.alb.id
+  description                  = "FastAPI traffic from the shared application load balancer."
+  referenced_security_group_id = each.value
   from_port                    = var.backend_container_port
   ip_protocol                  = "tcp"
   to_port                      = var.backend_container_port
@@ -149,14 +132,6 @@ resource "aws_vpc_security_group_ingress_rule" "rds_from_backend" {
   to_port                      = var.rds_port
 }
 
-resource "aws_lb" "app" {
-  name               = "${var.app_name}-${var.environment}-app"
-  load_balancer_type = "application"
-  internal           = false
-  security_groups    = [aws_security_group.alb.id]
-  subnets            = local.backend_subnet_ids
-}
-
 resource "aws_lb_target_group" "backend" {
   name        = "${var.app_name}-${var.environment}-backend"
   port        = var.backend_container_port
@@ -177,21 +152,31 @@ resource "aws_lb_target_group" "backend" {
   }
 }
 
-# Plain HTTP is correct here: this listener is only reachable from CloudFront,
-# and CloudFront terminates TLS for viewers.
-resource "aws_lb_listener" "http" {
-  load_balancer_arn = aws_lb.app.arn
-  port              = 80
-  protocol          = "HTTP"
+# A host-header rule on the shared load balancer, rather than a load balancer of
+# our own. The listener's default action still sends everything else to the aolf
+# backend, so this adds a branch without altering existing routing.
+#
+# The match is on the CloudFront domain because the /api/* behaviour forwards the
+# viewer Host (see the AllViewer policy in app_frontend.tf). With the stock
+# AllViewerExceptHostHeader policy every app behind this load balancer would
+# arrive with the same Host and could not be told apart.
+resource "aws_lb_listener_rule" "backend" {
+  listener_arn = data.aws_lb_listener.shared_http.arn
+  priority     = var.alb_listener_rule_priority
 
-  default_action {
+  condition {
+    host_header {
+      values = compact([
+        aws_cloudfront_distribution.app.domain_name,
+        var.app_hostname,
+      ])
+    }
+  }
+
+  action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.backend.arn
   }
-}
-
-resource "aws_ecs_cluster" "app" {
-  name = "${var.app_name}-${var.environment}"
 }
 
 resource "aws_ecs_task_definition" "backend" {
@@ -225,13 +210,20 @@ resource "aws_ecs_task_definition" "backend" {
       environment = [
         { name = "APP_ENV", value = var.environment },
         { name = "AUTH_COOKIE_SECURE", value = "true" },
-        { name = "CORS_ALLOWED_ORIGINS", value = "https://${var.app_hostname}" },
+        # CloudFront serves the site and /api/* from one origin, so browser calls
+        # are same-origin and this list stays empty in AWS. It exists for local
+        # development, where the Vite dev server is a separate origin.
+        { name = "CORS_ALLOWED_ORIGINS", value = var.app_hostname == "" ? "" : "https://${var.app_hostname}" },
       ]
 
       secrets = [
         {
           name      = "DATABASE_URL"
           valueFrom = aws_secretsmanager_secret.app["database-url"].arn
+        },
+        {
+          name      = "WAREHOUSE_DATABASE_URL"
+          valueFrom = aws_secretsmanager_secret.app["warehouse-database-url"].arn
         },
         {
           name      = "SESSION_SECRET"
@@ -253,7 +245,7 @@ resource "aws_ecs_task_definition" "backend" {
 
 resource "aws_ecs_service" "backend" {
   name            = local.backend_name
-  cluster         = aws_ecs_cluster.app.id
+  cluster         = data.aws_ecs_cluster.shared.arn
   task_definition = aws_ecs_task_definition.backend.arn
   desired_count   = var.backend_desired_count
   launch_type     = "FARGATE"
@@ -281,7 +273,7 @@ resource "aws_ecs_service" "backend" {
   }
 
   depends_on = [
-    aws_lb_listener.http,
+    aws_lb_listener_rule.backend,
     aws_iam_role_policy_attachment.backend_execution_managed,
     aws_iam_role_policy.backend_execution_secrets,
   ]

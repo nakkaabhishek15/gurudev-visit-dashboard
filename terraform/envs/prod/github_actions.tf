@@ -186,7 +186,7 @@ data "aws_iam_policy_document" "github_actions_backend_deploy" {
     condition {
       test     = "ArnEquals"
       variable = "ecs:cluster"
-      values   = [aws_ecs_cluster.app.arn]
+      values   = [data.aws_ecs_cluster.shared.arn]
     }
   }
 

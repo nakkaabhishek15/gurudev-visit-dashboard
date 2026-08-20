@@ -76,6 +76,7 @@ variable "app_secret_names" {
   type        = set(string)
   default = [
     "database-url",
+    "warehouse-database-url",
     "auth/session-secret",
   ]
 }
@@ -138,13 +139,25 @@ variable "frontend_bucket_name" {
 }
 
 variable "app_hostname" {
-  description = "Public hostname served by CloudFront, for example site.example.com."
+  description = <<-EOT
+    Public hostname served by CloudFront, for example site.example.com. Leave
+    empty to skip the custom domain: the distribution then answers on its own
+    dxxxxxxxx.cloudfront.net name with the free CloudFront certificate, which
+    needs no ACM request and no DNS record. Set it once DNS is ready.
+  EOT
   type        = string
+  default     = ""
 }
 
 variable "acm_certificate_arn" {
-  description = "Issued ACM certificate ARN IN us-east-1 covering app_hostname. CloudFront rejects certificates from any other region."
+  description = "Issued ACM certificate ARN IN us-east-1 covering app_hostname. CloudFront rejects certificates from any other region. Required only when app_hostname is set."
   type        = string
+  default     = ""
+
+  validation {
+    condition     = var.acm_certificate_arn == "" || can(regex("^arn:aws:acm:us-east-1:", var.acm_certificate_arn))
+    error_message = "CloudFront only accepts certificates issued in us-east-1."
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -194,4 +207,26 @@ variable "opentofu_state_kms_key_arn" {
   description = "KMS key encrypting the state file. Leave empty when the bucket uses SSE-S3 rather than SSE-KMS."
   type        = string
   default     = "arn:aws:kms:ca-central-1:716156543359:key/0bf60b64-bf63-4a01-a88f-e01e906cafa8"
+}
+
+# ---------------------------------------------------------------------------
+# Shared infrastructure owned by the aolf stack.
+# ---------------------------------------------------------------------------
+
+variable "ecs_cluster_name" {
+  description = "Existing ECS cluster to run the service in. Clusters are a free logical grouping, so this stack joins the aolf one rather than creating a second."
+  type        = string
+  default     = "aolf-prod"
+}
+
+variable "shared_alb_name" {
+  description = "Existing application load balancer to attach a listener rule to. Its default action is left alone -- only traffic matching this app's host header is diverted."
+  type        = string
+  default     = "aolf-prod-app"
+}
+
+variable "alb_listener_rule_priority" {
+  description = "Priority for this app's rule on the shared listener. Must not collide with a rule the aolf stack already owns; lower numbers evaluate first."
+  type        = number
+  default     = 100
 }

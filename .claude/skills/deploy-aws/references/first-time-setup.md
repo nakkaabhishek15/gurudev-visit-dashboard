@@ -14,28 +14,38 @@ Do these in order. Several steps depend on the one before.
 | `app_hostname` | `site.devopsagent.com` | You must control the DNS zone |
 | `github_repository` | `nakkaabhishek15/gurudev-visit-dashboard` | `owner/name`, must match exactly |
 
-## 2. Request the ACM certificate — in us-east-1
+## 2. Decide whether you need a custom domain yet
 
-CloudFront ignores certificates in any other region. This is the single most
-common setup mistake.
+You do not need one to get a working, shareable HTTPS link. With `app_hostname`
+and `acm_certificate_arn` left empty, CloudFront serves the app on its own
+`dxxxxxxxx.cloudfront.net` name using CloudFront's own certificate: no ACM
+request, no DNS record, nothing to wait for. `tofu output -raw app_url` prints
+the link.
+
+Take this path when DNS for the domain lives somewhere you do not control, or
+when the domain already serves a different site.
+
+To add a custom domain, now or later, request the certificate first. CloudFront
+ignores certificates from any other region, which is the single most common
+setup mistake:
 
 ```bash
 aws acm request-certificate \
   --region us-east-1 \
-  --domain-name site.devopsagent.com \
+  --domain-name site.example.com \
   --validation-method DNS \
   --query CertificateArn --output text
 ```
 
-Get the validation record and add it to DNS:
+Get the validation record and add it wherever the zone is hosted:
 
 ```bash
 aws acm describe-certificate --region us-east-1 --certificate-arn <arn> \
   --query 'Certificate.DomainValidationOptions[0].ResourceRecord'
 ```
 
-Wait for `Status: ISSUED` before applying. OpenTofu fails on a `PENDING_VALIDATION`
-certificate.
+Wait for `Status: ISSUED`, then set both variables and re-apply. OpenTofu fails
+on a `PENDING_VALIDATION` certificate.
 
 ## 3. Fill in the config files
 
@@ -99,6 +109,10 @@ aws secretsmanager put-secret-value \
   --secret-string 'postgresql://gurudev_app:<password>@<rds-endpoint>:5432/gurudev'
 
 aws secretsmanager put-secret-value \
+  --secret-id /gurudev/prod/warehouse-database-url \
+  --secret-string 'postgresql://gurudev_reader:<password>@<rds-endpoint>:5432/postgres'
+
+aws secretsmanager put-secret-value \
   --secret-id /gurudev/prod/auth/session-secret \
   --secret-string "$(python -c 'import secrets; print(secrets.token_urlsafe(64))')"
 ```
@@ -106,7 +120,15 @@ aws secretsmanager put-secret-value \
 The session secret signs login cookies. Rotating it signs every user out — which
 is exactly what you want if it ever leaks.
 
+`warehouse-database-url` is the read-only connection the Retreat Guru reports
+use. Create its role first with `terraform/scripts/warehouse_reader.sql`, and do
+not point this at `aolf_admin`. The reports only ever SELECT from three tables,
+and the role is granted exactly that and nothing more.
+
 ## 7. Point DNS at CloudFront
+
+Skip this entirely if you left `app_hostname` empty. The CloudFront domain from
+`tofu output -raw app_url` is already the link.
 
 ```bash
 tofu output -raw cloudfront_domain_name
@@ -114,7 +136,8 @@ tofu output -raw cloudfront_domain_name
 
 Create a CNAME (or Route 53 alias A record) from `app_hostname` to that value.
 Alias is better if the zone is in Route 53: no CNAME-at-apex problem, no extra
-lookup.
+lookup. Note that this account holds no Route 53 hosted zone today, so
+the record has to be added wherever the domain is actually managed.
 
 ## 8. First deploy
 

@@ -16,8 +16,19 @@ data "aws_security_group" "rds" {
   id = var.rds_security_group_id
 }
 
-# Restricts ALB ingress to CloudFront edge IPs so the load balancer cannot be
-# reached directly, bypassing the distribution.
-data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing" {
-  name = "com.amazonaws.global.cloudfront.origin-facing"
+# Shared with the aolf stack, which owns all three. This stack only reads them:
+# it adds one target group, one listener rule, and one service. An ECS cluster is
+# a logical grouping that costs nothing, and a second load balancer would be ~$20
+# a month for an internal dashboard, so neither is worth duplicating.
+data "aws_ecs_cluster" "shared" {
+  cluster_name = var.ecs_cluster_name
+}
+
+data "aws_lb" "shared" {
+  name = var.shared_alb_name
+}
+
+data "aws_lb_listener" "shared_http" {
+  load_balancer_arn = data.aws_lb.shared.arn
+  port              = 80
 }

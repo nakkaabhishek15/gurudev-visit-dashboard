@@ -11,8 +11,11 @@ data "aws_cloudfront_cache_policy" "caching_disabled" {
   name = "Managed-CachingDisabled"
 }
 
-data "aws_cloudfront_origin_request_policy" "all_viewer_except_host_header" {
-  name = "Managed-AllViewerExceptHostHeader"
+# AllViewer, not AllViewerExceptHostHeader: the shared load balancer tells this
+# app's traffic apart from the aolf app's by the Host header, so the viewer's Host
+# has to survive the trip to the origin.
+data "aws_cloudfront_origin_request_policy" "all_viewer" {
+  name = "Managed-AllViewer"
 }
 
 resource "aws_s3_bucket" "frontend" {
@@ -98,7 +101,7 @@ resource "aws_cloudfront_distribution" "app" {
   default_root_object = "index.html"
   is_ipv6_enabled     = false
   price_class         = "PriceClass_100"
-  aliases             = [var.app_hostname]
+  aliases             = var.app_hostname == "" ? [] : [var.app_hostname]
 
   origin {
     origin_id                = local.frontend_origin_id
@@ -108,7 +111,7 @@ resource "aws_cloudfront_distribution" "app" {
 
   origin {
     origin_id   = local.backend_origin_id
-    domain_name = aws_lb.app.dns_name
+    domain_name = data.aws_lb.shared.dns_name
 
     custom_origin_config {
       http_port              = 80
@@ -132,9 +135,8 @@ resource "aws_cloudfront_distribution" "app" {
     }
   }
 
-  # Caching must stay disabled here. AllViewerExceptHostHeader forwards the
-  # session cookie; caching authenticated responses would serve one user's data
-  # to the next.
+  # Caching must stay disabled here. AllViewer forwards the session cookie;
+  # caching authenticated responses would serve one user's data to the next.
   ordered_cache_behavior {
     path_pattern             = "/api/*"
     target_origin_id         = local.backend_origin_id
@@ -142,7 +144,7 @@ resource "aws_cloudfront_distribution" "app" {
     allowed_methods          = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
     cached_methods           = ["GET", "HEAD"]
     cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host_header.id
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer.id
     compress                 = true
   }
 
@@ -152,10 +154,16 @@ resource "aws_cloudfront_distribution" "app" {
     }
   }
 
+  # With no custom hostname the distribution uses CloudFront's own certificate on
+  # its dxxxxxxxx.cloudfront.net name. That is a real HTTPS endpoint, so the site
+  # is shareable before DNS exists; the ACM branch takes over once app_hostname
+  # is set. minimum_protocol_version is not accepted alongside the default
+  # certificate -- CloudFront fixes the policy itself in that case.
   viewer_certificate {
-    acm_certificate_arn      = var.acm_certificate_arn
-    ssl_support_method       = "sni-only"
-    minimum_protocol_version = "TLSv1.2_2021"
+    cloudfront_default_certificate = var.acm_certificate_arn == ""
+    acm_certificate_arn            = var.acm_certificate_arn == "" ? null : var.acm_certificate_arn
+    ssl_support_method             = var.acm_certificate_arn == "" ? null : "sni-only"
+    minimum_protocol_version       = var.acm_certificate_arn == "" ? null : "TLSv1.2_2021"
   }
 }
 

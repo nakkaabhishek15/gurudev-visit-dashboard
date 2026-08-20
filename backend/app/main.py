@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.pages import router as pages_router
+from app.api.reports import router as reports_router
 from app.auth.dependencies import require_auth
 from app.auth.router import router as auth_router
 from app.db.session import db_connection
@@ -49,6 +50,7 @@ def create_app() -> FastAPI:
 
     protected = [Depends(require_auth)]
     app.include_router(pages_router, prefix="/api", dependencies=protected)
+    app.include_router(reports_router, prefix="/api", dependencies=protected)
     return app
 
 

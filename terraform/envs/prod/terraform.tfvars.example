@@ -1,0 +1,26 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+#
+# The four variables below have no defaults -- OpenTofu will not plan without them.
+
+# Globally unique. Convention: <app>-frontend-<env>-<account-id>
+frontend_bucket_name = "gurudev-frontend-prod-716156543359"
+
+# Must resolve to the CloudFront distribution once deployed.
+app_hostname = "site.devopsagent.com"
+
+# MUST be issued in us-east-1, whatever region the rest of the stack uses.
+acm_certificate_arn = "arn:aws:acm:us-east-1:716156543359:certificate/REPLACE-ME"
+
+github_repository = "nakkaabhishek15/gurudev-visit-dashboard"
+
+# --- Optional overrides -----------------------------------------------------
+
+# app_name              = "gurudev"
+# backend_desired_count = 1
+# backend_task_cpu      = 256
+# backend_task_memory   = 512
+
+# Only set true if the GitHub OIDC provider does not already exist in the
+# account. It does exist if aolf-warehouse has been applied. Creating a second
+# one fails with EntityAlreadyExists.
+# create_github_oidc_provider = false

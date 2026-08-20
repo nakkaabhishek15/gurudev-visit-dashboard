@@ -1,0 +1,30 @@
+# Secrets and local config
+.env
+backend/.env
+frontend/.env
+terraform/envs/prod/terraform.tfvars
+terraform/envs/prod/backend.hcl
+*.pem
+
+# OpenTofu / Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
+.svelte-kit/
+frontend/build/
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+*.stackdump

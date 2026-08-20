@@ -1,0 +1,8 @@
+# Copy to backend.hcl and adjust, then:
+#   tofu init -backend-config=backend.hcl
+#
+# Reusing the existing AOLF state bucket is fine -- the key below keeps this
+# stack's state in a separate object from aolf-warehouse's.
+bucket = "aolf-opentofu-state-716156543359-ca-central-1"
+key    = "gurudev/prod/terraform.tfstate"
+region = "ca-central-1"
